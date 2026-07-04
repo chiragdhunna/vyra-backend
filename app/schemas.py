@@ -21,6 +21,7 @@ class VisionContext(BaseModel):
 
     present: bool = False
     smiling: bool = False
+    eyes_open: float = 1.0  # 0..1, 1 = wide awake (min across visible faces)
 
 
 class ChatRequest(BaseModel):

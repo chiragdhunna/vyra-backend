@@ -91,6 +91,7 @@ async def realtime(ws: WebSocket) -> None:
                     VisionContext(
                         present=bool(event.get("present", False)),
                         smiling=bool(event.get("smiling", False)),
+                        eyes_open=float(event.get("eyes_open", 1.0)),
                     )
                 )
             elif kind == "tts.state":

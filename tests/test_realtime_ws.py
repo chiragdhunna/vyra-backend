@@ -169,6 +169,68 @@ def test_mute_pauses_ears(make_client):
         ws.__exit__(None, None, None)
 
 
+def test_greeting_includes_wave_gesture(make_client):
+    client = make_client(GREETING_DELAY_SECONDS="0.1")
+    ws = client.websocket_connect("/realtime")
+    ws.__enter__()
+    try:
+        ws.send_json({"type": "session.start", "sample_rate": RATE, "greet": True})
+        say, _ = recv_until(ws, "assistant.say")
+        assert say["proactive"] is True
+        assert say["gesture"] == "wave"
+    finally:
+        ws.__exit__(None, None, None)
+
+
+def test_welcome_back_reaction_after_absence(make_client):
+    import time as _time
+
+    client = make_client(
+        WELCOME_BACK_AFTER_SECONDS="0.2",
+        VISION_REACT_COOLDOWN_SECONDS="0.05",
+        PROACTIVE_IDLE_SECONDS="30",
+    )
+    ws, _ = start_session(client)  # greet=False
+    try:
+        ws.send_json({"type": "vision.state", "present": True, "smiling": False})
+        ws.send_json({"type": "vision.state", "present": False, "smiling": False})
+        _time.sleep(0.3)  # away longer than the threshold
+        ws.send_json({"type": "vision.state", "present": True, "smiling": False})
+        say, _ = recv_until(ws, "assistant.say")
+        assert say["proactive"] is True
+        assert say["gesture"] == "wave"
+    finally:
+        ws.__exit__(None, None, None)
+
+
+def test_tired_eyes_trigger_stretch_checkin(make_client):
+    client = make_client(
+        TIRED_AFTER_SECONDS="0.2",
+        TIRED_REACT_COOLDOWN_SECONDS="0.05",
+        VISION_REACT_COOLDOWN_SECONDS="0.05",
+        PROACTIVE_IDLE_SECONDS="30",
+    )
+    ws, _ = start_session(client)
+    try:
+        ws.send_json({"type": "vision.state", "present": True,
+                      "smiling": False, "eyes_open": 0.1})
+        say, _ = recv_until(ws, "assistant.say")
+        assert say["proactive"] is True
+        assert say["gesture"] == "stretch"
+    finally:
+        ws.__exit__(None, None, None)
+
+
+def test_laugh_gesture_detection():
+    from app.realtime.session import pick_gesture
+
+    assert pick_gesture("Hahaha that's amazing!") == "laugh"
+    assert pick_gesture("lol you got me") == "laugh"
+    assert pick_gesture("hehe okay okay") == "laugh"
+    assert pick_gesture("That is wonderful news!") is None
+    assert pick_gesture("What a hat.") is None
+
+
 def test_ws_auth_rejects_bad_key(make_client):
     import pytest
     from starlette.websockets import WebSocketDisconnect

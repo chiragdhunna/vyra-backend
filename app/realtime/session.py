@@ -32,6 +32,9 @@ from ..conversation import SessionHistory, build_messages
 from ..personality import (
     GREETING_INSTRUCTION,
     PROACTIVE_INSTRUCTION,
+    SMILE_INSTRUCTION,
+    TIRED_INSTRUCTION,
+    WELCOME_BACK_INSTRUCTION,
     parse_emotion,
 )
 from ..providers.base import LLMProvider, ProviderError
@@ -79,6 +82,16 @@ def is_noise_transcript(text: str) -> bool:
     return False
 
 
+_LAUGH_RE = re.compile(r"\b(?:ha){2,}h?\b|\blol\b|\blmao\b|\bhehe+\b", re.IGNORECASE)
+
+
+def pick_gesture(text: str) -> Optional[str]:
+    """Server-chosen avatar pose for a spoken line (None = no override)."""
+    if _LAUGH_RE.search(text):
+        return "laugh"
+    return None
+
+
 class RealtimeSession:
     def __init__(
         self,
@@ -117,6 +130,11 @@ class RealtimeSession:
         )
 
         self.vision: Optional[VisionContext] = None
+        self._absent_since: Optional[float] = None
+        self._eyes_low_since: Optional[float] = None
+        self._was_smiling = False
+        self._last_vision_react = 0.0
+        self._last_tired_react = 0.0
         self._say_id = 0
         self._greeted = False
         self._nudges = 0
@@ -169,8 +187,14 @@ class RealtimeSession:
             await self._handle_user_final(text)
 
     async def on_vision(self, vision: VisionContext) -> None:
-        arrived = vision.present and not (self.vision.present if self.vision else False)
+        was_present = self.vision.present if self.vision else False
+        arrived = vision.present and not was_present
+        left = was_present and not vision.present
         self.vision = vision
+        now = time.monotonic()
+
+        if left:
+            self._absent_since = now
         # Their friend just sat down and nothing has been said yet → greet.
         if (
             arrived
@@ -180,7 +204,52 @@ class RealtimeSession:
             and self.state == protocol.LISTENING
         ):
             self._greeted = True
-            await self._say_instruction(GREETING_INSTRUCTION, proactive=True)
+            await self._say_instruction(
+                GREETING_INSTRUCTION, proactive=True, gesture="wave"
+            )
+            self._absent_since = None
+            return
+
+        if not self._settings.vision_reactions or self.muted:
+            return
+        can_react = (
+            self.state == protocol.LISTENING
+            and not self._vad.in_speech
+            and now - self._last_vision_react
+            >= self._settings.vision_react_cooldown_seconds
+        )
+
+        # Welcome them back after they stepped away for a while.
+        if (
+            arrived
+            and can_react
+            and self._absent_since is not None
+            and now - self._absent_since
+            >= self._settings.welcome_back_after_seconds
+        ):
+            self._last_vision_react = now
+            self._absent_since = None
+            await self._say_instruction(
+                WELCOME_BACK_INSTRUCTION, proactive=True, gesture="wave"
+            )
+            return
+        if arrived:
+            self._absent_since = None
+
+        # A smile she notices (edge-triggered, cooled down).
+        if vision.smiling and not self._was_smiling and can_react:
+            self._was_smiling = True
+            self._last_vision_react = now
+            await self._say_instruction(SMILE_INSTRUCTION, proactive=True)
+            return
+        self._was_smiling = vision.smiling
+
+        # Heavy eyes → tired check-in (sustained + long cooldown).
+        if vision.present and vision.eyes_open < self._settings.tired_eyes_threshold:
+            if self._eyes_low_since is None:
+                self._eyes_low_since = now
+        else:
+            self._eyes_low_since = None
 
     async def on_tts_state(self, playing: bool) -> None:
         if playing:
@@ -257,7 +326,11 @@ class RealtimeSession:
     # ------------------------------------------------------------------ #
     # Thinking / speaking
     # ------------------------------------------------------------------ #
-    async def _think(self, extra_instruction: Optional[str] = None) -> None:
+    async def _think(
+        self,
+        extra_instruction: Optional[str] = None,
+        gesture: Optional[str] = None,
+    ) -> None:
         await self._set_state(protocol.THINKING)
         messages = build_messages(
             self.history.turns,
@@ -283,7 +356,12 @@ class RealtimeSession:
                 raw[:200],
             )
             text, emotion = "Sorry, say that again?", "thinking"
-        await self._say(text, emotion, proactive=extra_instruction is not None)
+        await self._say(
+            text,
+            emotion,
+            proactive=extra_instruction is not None,
+            gesture=gesture or pick_gesture(text),
+        )
 
     async def _say(
         self,
@@ -291,6 +369,7 @@ class RealtimeSession:
         emotion: str,
         proactive: bool = False,
         remember: bool = True,
+        gesture: Optional[str] = None,
     ) -> None:
         if remember:
             self.history.add_assistant(text)
@@ -305,14 +384,20 @@ class RealtimeSession:
                 text=text,
                 emotion=emotion,
                 proactive=proactive,
+                gesture=gesture or "",
             )
         )
         self._restart_speak_timeout()
 
-    async def _say_instruction(self, instruction: str, proactive: bool) -> None:
+    async def _say_instruction(
+        self,
+        instruction: str,
+        proactive: bool,
+        gesture: Optional[str] = None,
+    ) -> None:
         self._cancel_think()
         self._think_task = asyncio.ensure_future(
-            self._think(extra_instruction=instruction)
+            self._think(extra_instruction=instruction, gesture=gesture)
         )
 
     async def _barge_in(self) -> None:
@@ -367,7 +452,23 @@ class RealtimeSession:
                     and now - self._started_at >= self._settings.greeting_delay_seconds
                 ):
                     self._greeted = True
-                    await self._say_instruction(GREETING_INSTRUCTION, proactive=True)
+                    await self._say_instruction(
+                        GREETING_INSTRUCTION, proactive=True, gesture="wave"
+                    )
+                    continue
+                if (
+                    self._settings.vision_reactions
+                    and self._eyes_low_since is not None
+                    and now - self._eyes_low_since
+                    >= self._settings.tired_after_seconds
+                    and now - self._last_tired_react
+                    >= self._settings.tired_react_cooldown_seconds
+                ):
+                    self._last_tired_react = now
+                    self._eyes_low_since = None
+                    await self._say_instruction(
+                        TIRED_INSTRUCTION, proactive=True, gesture="stretch"
+                    )
                     continue
                 if (
                     self._nudges < self._settings.proactive_max_nudges

@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     barge_min_ms: int = 300
     barge_noise_multiplier: float = 5.0
 
+    # --- Vision awareness (Jarvis mode) ---
+    # She reacts to what the camera senses: welcomes you back after you step
+    # away, notices smiles, checks in when you look tired. Cooldowns keep her
+    # observant, not creepy.
+    vision_reactions: bool = True
+    welcome_back_after_seconds: float = 45.0
+    vision_react_cooldown_seconds: float = 90.0
+    tired_eyes_threshold: float = 0.4
+    tired_after_seconds: float = 15.0
+    tired_react_cooldown_seconds: float = 600.0
+
     # --- Companion behaviour ---
     greet_on_connect: bool = True
     greeting_delay_seconds: float = 3.0
