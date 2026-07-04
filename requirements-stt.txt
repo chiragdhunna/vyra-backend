@@ -1,0 +1,4 @@
+# Server-side speech-to-text (streaming mic → text on this machine).
+# Optional but recommended: enables true interrupt-anytime voice.
+# Without it the backend still runs; the app falls back to on-device STT.
+faster-whisper>=1.0
