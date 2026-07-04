@@ -50,8 +50,9 @@ class Settings(BaseSettings):
     # `pip install -r requirements-stt.txt`). client = the phone does STT and
     # sends text. Anything unavailable falls back to client gracefully.
     stt_provider: str = "whisper"  # whisper | client | fake (tests)
+    stt_timeout_seconds: float = 20.0  # a wedged native call must never block the session
     whisper_model: str = "base.en"
-    whisper_device: str = "auto"  # auto | cpu | cuda
+    whisper_device: str = "cpu"  # cpu | cuda | auto (auto can HANG on broken CUDA installs)
     whisper_compute_type: str = "int8"
 
     # Voice-activity detection (energy-based; tuned for a phone on a desk).

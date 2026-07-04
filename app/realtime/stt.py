@@ -129,8 +129,17 @@ def stt_mode(settings: Settings) -> str:
     return "client"
 
 
+_shared_whisper: Optional[SttEngine] = None
+
+
 def build_stt(settings: Settings) -> Optional[SttEngine]:
-    """Returns an engine, or None → sessions run in client-STT mode."""
+    """Returns an engine, or None → sessions run in client-STT mode.
+
+    The whisper engine is a process-wide singleton: sessions come and go
+    with every app reconnect, and reloading the model per connection wasted
+    seconds and re-triggered device probing every time.
+    """
+    global _shared_whisper
     kind = settings.stt_provider.strip().lower()
     if kind == "whisper":
         if not _WHISPER_AVAILABLE:
@@ -140,11 +149,13 @@ def build_stt(settings: Settings) -> Optional[SttEngine]:
                 "client-side STT."
             )
             return None
-        return WhisperStt(
-            model=settings.whisper_model,
-            device=settings.whisper_device,
-            compute_type=settings.whisper_compute_type,
-        )
+        if _shared_whisper is None:
+            _shared_whisper = WhisperStt(
+                model=settings.whisper_model,
+                device=settings.whisper_device,
+                compute_type=settings.whisper_compute_type,
+            )
+        return _shared_whisper
     if kind == "fake":
         return FakeStt()
     return None

@@ -23,6 +23,7 @@ Friend-like behaviours implemented here:
 
 import asyncio
 import logging
+import re
 import time
 from typing import Awaitable, Callable, Optional
 
@@ -46,6 +47,36 @@ SendFn = Callable[[dict], Awaitable[None]]
 _FALLBACK_LINE = (
     "Hmm, I couldn't reach my brain just now. Give me a second and try again?"
 )
+
+# Whisper reliably hallucinates these on noise, breaths, and TTS echo tails.
+# A phantom turn is worse than a dropped grunt: it cancels the user's real
+# pending turn and makes Vyra answer things nobody said.
+_NOISE_WORDS = {
+    "you", "the", "uh", "um", "hmm", "mm", "so", "and", "yeah", "okay",
+    "ok", "oh", "bye", "hi", "hey", "thanks", "thank you",
+}
+_NOISE_PHRASES = {
+    "thanks for watching", "thank you for watching",
+    "we'll see you in the next one", "see you in the next one",
+    "see you in the next video", "please subscribe", "the end",
+    "subtitles by the amara org community",
+}
+
+
+def is_noise_transcript(text: str) -> bool:
+    """True when a transcript looks like a Whisper noise hallucination."""
+    t = re.sub(r"[^\w\s']", " ", text.lower()).strip()
+    t = re.sub(r"\s+", " ", t)
+    if not t:
+        return True
+    if t in _NOISE_PHRASES:
+        return True
+    words = t.split()
+    if len(set(words)) == 1 and len(words) >= 3:  # "and and and and"
+        return True
+    if len(words) <= 2 and t in _NOISE_WORDS:
+        return True
+    return False
 
 
 class RealtimeSession:
@@ -182,7 +213,19 @@ class RealtimeSession:
         if self._stt is None:
             return
         try:
-            text = await self._stt.transcribe(pcm, self._sample_rate)
+            # A wedged native call (e.g. a broken CUDA runtime) must never
+            # freeze the session's receive loop — that's how orphan sessions
+            # and reconnect storms happen.
+            text = await asyncio.wait_for(
+                self._stt.transcribe(pcm, self._sample_rate),
+                timeout=self._settings.stt_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "STT timed out after %.0fs — check WHISPER_DEVICE (cpu is "
+                "the safe choice)", self._settings.stt_timeout_seconds,
+            )
+            return
         except Exception as exc:  # noqa: BLE001 - STT must never kill a session
             logger.error("STT failed: %s", exc)
             await self._send(protocol.event("error", message=f"STT failed: {exc}"))
@@ -193,6 +236,9 @@ class RealtimeSession:
                 "utterance (%.1fs audio) transcribed to empty text — ignored",
                 len(pcm) / 2 / self._sample_rate,
             )
+            return
+        if is_noise_transcript(text):
+            logger.info("ignored noise transcript: %r", text)
             return
         logger.info("heard (%.1fs): %r", len(pcm) / 2 / self._sample_rate, text)
         await self._send(protocol.event("user.final", text=text))

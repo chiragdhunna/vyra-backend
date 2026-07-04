@@ -65,3 +65,33 @@ def test_session_history_bounded_and_counted():
     assert len(history.turns) == 4
     assert history.turns[-1].content == "a5"
     assert history.user_turn_count == 2
+
+
+def test_noise_transcript_filter():
+    from app.realtime.session import is_noise_transcript
+
+    # Whisper's greatest hits on silence/echo:
+    assert is_noise_transcript("You")
+    assert is_noise_transcript("you.")
+    assert is_noise_transcript("and and and and and and and")
+    assert is_noise_transcript("We'll see you in the next one.")
+    assert is_noise_transcript("Thanks for watching!")
+    assert is_noise_transcript("  ")
+    # Real speech must pass:
+    assert not is_noise_transcript("Hi there, am I audible?")
+    assert not is_noise_transcript("Oh, really?")
+    assert not is_noise_transcript("you know what happened today")
+    assert not is_noise_transcript("No, tell me more")
+
+
+def test_shared_whisper_singleton_shape():
+    # build_stt('fake') returns fresh engines; whisper path is cached.
+    from app.config import Settings
+    from app.realtime import stt as stt_mod
+
+    fake_settings = Settings(stt_provider="fake")
+    a = stt_mod.build_stt(fake_settings)
+    b = stt_mod.build_stt(fake_settings)
+    assert a is not b  # fakes are per-session (tests rely on fresh queues)
+    disabled = stt_mod.build_stt(Settings(stt_provider="client"))
+    assert disabled is None
