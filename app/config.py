@@ -68,6 +68,24 @@ class Settings(BaseSettings):
     barge_min_ms: int = 300
     barge_noise_multiplier: float = 5.0
 
+    # --- Her voice (server-side neural TTS) ---
+    # edge = Microsoft Edge neural voices (free, no key, natural female
+    # voices — night-and-day vs device TTS). Needs internet on THIS machine.
+    # device = the phone's TTS engine (fully offline).
+    tts_provider: str = "edge"  # edge | device | fake (tests)
+    edge_tts_voice: str = "en-US-JennyNeural"  # warm female; try en-US-AriaNeural, en-GB-MaisieNeural
+    edge_tts_rate: str = "+4%"
+    edge_tts_pitch: str = "+18Hz"  # slightly brighter — she's a young woman
+    tts_timeout_seconds: float = 12.0
+
+    # --- Vision LLM (situational sight) ---
+    # A local multimodal model (via Ollama) that periodically glimpses a
+    # downscaled camera frame so she knows WHAT you're doing — not just that
+    # you're present. e.g. `ollama pull moondream` (tiny) or llava.
+    # Empty = disabled. Frames never leave your LAN.
+    vision_llm_model: str = ""  # moondream | llava | ... | fake (tests)
+    vision_frame_interval_seconds: float = 20.0
+
     # --- Vision awareness (Jarvis mode) ---
     # She reacts to what the camera senses: welcomes you back after you step
     # away, notices smiles, checks in when you look tired. Cooldowns keep her
@@ -82,7 +100,7 @@ class Settings(BaseSettings):
     # --- Companion behaviour ---
     greet_on_connect: bool = True
     greeting_delay_seconds: float = 3.0
-    proactive_idle_seconds: float = 75.0
+    proactive_idle_seconds: float = 75.0  # base; jittered and escalating
     proactive_max_nudges: int = 3
     speak_timeout_seconds: float = 30.0  # safety if the phone never reports TTS end
 

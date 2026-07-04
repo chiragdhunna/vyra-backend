@@ -5,3 +5,4 @@ uvicorn[standard]>=0.29
 httpx>=0.27
 pydantic>=2.6
 pydantic-settings>=2.2
+edge-tts>=6.1  # neural voice (free MS Edge voices; falls back to device TTS)

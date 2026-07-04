@@ -22,7 +22,9 @@ Friend-like behaviours implemented here:
 """
 
 import asyncio
+import base64
 import logging
+import random
 import re
 import time
 from typing import Awaitable, Callable, Optional
@@ -31,7 +33,6 @@ from ..config import Settings
 from ..conversation import SessionHistory, build_messages
 from ..personality import (
     GREETING_INSTRUCTION,
-    PROACTIVE_INSTRUCTION,
     SMILE_INSTRUCTION,
     TIRED_INSTRUCTION,
     WELCOME_BACK_INSTRUCTION,
@@ -39,8 +40,11 @@ from ..personality import (
 )
 from ..providers.base import LLMProvider, ProviderError
 from ..schemas import VisionContext
+from ..starters import starter_instruction
 from . import protocol
+from .sight import Glimpse, SightEngine
 from .stt import SttEngine
+from .tts import TtsEngine
 from .vad import SPEECH_END, SPEECH_START, VadStream
 
 logger = logging.getLogger("vyra.session")
@@ -103,11 +107,19 @@ class RealtimeSession:
         sample_rate: int = 16000,
         greet: bool = True,
         client_stt: bool = False,
+        tts: Optional[TtsEngine] = None,
+        sight: Optional[SightEngine] = None,
     ) -> None:
         self._send = send
         self._settings = settings
         self._provider = provider
         self._stt = None if client_stt else stt
+        self._tts = tts
+        self._sight = sight
+        self._glimpse = Glimpse()
+        self._describing = False
+        self._rng = random.Random()
+        self._last_starter_mode: Optional[str] = None
         self._user_name = user_name
         self._sample_rate = sample_rate
         self._greet_enabled = greet and settings.greet_on_connect
@@ -138,6 +150,9 @@ class RealtimeSession:
         self._say_id = 0
         self._greeted = False
         self._nudges = 0
+        self._nudge_gap = settings.proactive_idle_seconds * self._rng.uniform(
+            0.8, 1.3
+        )
         self._started_at = time.monotonic()
         self._last_activity = time.monotonic()
 
@@ -156,6 +171,9 @@ class RealtimeSession:
                 provider=self._provider.name,
                 model=self._provider.model,
                 stt="server" if self._stt else "client",
+                tts="server" if self._tts else "device",
+                vision_frames=self._sight is not None,
+                vision_frame_interval=self._settings.vision_frame_interval_seconds,
                 sample_rate=self._sample_rate,
             )
         )
@@ -251,6 +269,27 @@ class RealtimeSession:
         else:
             self._eyes_low_since = None
 
+    async def on_vision_frame(self, jpeg_b64: str) -> None:
+        """A periodic downscaled camera frame -> one-line scene glimpse."""
+        if self._sight is None or self._describing:
+            return
+        try:
+            jpeg = base64.b64decode(jpeg_b64)
+        except Exception:  # noqa: BLE001 - malformed frame, skip
+            return
+        self._describing = True
+
+        async def _describe() -> None:
+            try:
+                text = await self._sight.describe(jpeg)
+                if text:
+                    self._glimpse.update(text)
+                    logger.info("glimpse: %s", text)
+            finally:
+                self._describing = False
+
+        asyncio.ensure_future(_describe())
+
     async def on_tts_state(self, playing: bool) -> None:
         if playing:
             self._restart_speak_timeout()
@@ -315,6 +354,9 @@ class RealtimeSession:
 
     async def _handle_user_final(self, text: str) -> None:
         self._nudges = 0
+        self._nudge_gap = self._settings.proactive_idle_seconds * self._rng.uniform(
+            0.8, 1.3
+        )
         self._greeted = True  # they spoke first; skip the scripted greeting
         self._last_activity = time.monotonic()
         if self.state == protocol.SPEAKING:
@@ -338,6 +380,7 @@ class RealtimeSession:
             vision=self.vision,
             max_history_turns=self._settings.max_history_turns,
             extra_instruction=extra_instruction,
+            glimpse=self._glimpse.fresh(),
         )
         try:
             raw = await self._provider.chat(messages)
@@ -388,6 +431,17 @@ class RealtimeSession:
             )
         )
         self._restart_speak_timeout()
+        if self._tts is not None:
+            audio = await self._tts.synthesize(text)
+            # Empty audio_b64 = explicit "fall back to device TTS" signal.
+            await self._send(
+                protocol.event(
+                    "assistant.audio",
+                    id=self._say_id,
+                    format="mp3",
+                    audio_b64=base64.b64encode(audio).decode() if audio else "",
+                )
+            )
 
     async def _say_instruction(
         self,
@@ -472,11 +526,19 @@ class RealtimeSession:
                     continue
                 if (
                     self._nudges < self._settings.proactive_max_nudges
-                    and now - self._last_activity
-                    >= self._settings.proactive_idle_seconds
+                    and now - self._last_activity >= self._nudge_gap
                 ):
                     self._nudges += 1
-                    await self._say_instruction(PROACTIVE_INSTRUCTION, proactive=True)
+                    # Each re-engagement waits longer than the last (with
+                    # jitter) — persistent early, respectful later.
+                    self._nudge_gap *= 1.6 * self._rng.uniform(0.9, 1.15)
+                    mode, instruction = starter_instruction(
+                        self.history.user_turn_count,
+                        rng=self._rng,
+                        exclude=self._last_starter_mode,
+                    )
+                    self._last_starter_mode = mode
+                    await self._say_instruction(instruction, proactive=True)
         except asyncio.CancelledError:
             pass
 

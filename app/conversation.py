@@ -14,12 +14,19 @@ from .schemas import ChatTurn, VisionContext
 
 
 def context_note(
-    user_name: Optional[str] = None, vision: Optional[VisionContext] = None
+    user_name: Optional[str] = None,
+    vision: Optional[VisionContext] = None,
+    glimpse: Optional[str] = None,
 ) -> str:
     """A short situational note appended to the system prompt."""
     lines = []
     if user_name:
         lines.append(f"Your friend's name is {user_name}.")
+    if glimpse:
+        lines.append(
+            "Camera glimpse (what you can currently see): "
+            f"{glimpse} — use it naturally when relevant; don't narrate it."
+        )
     if vision is not None:
         if vision.present and vision.smiling:
             lines.append("Camera sense: your friend is here right now, and they're smiling.")
@@ -36,10 +43,11 @@ def build_messages(
     vision: Optional[VisionContext] = None,
     max_history_turns: int = 24,
     extra_instruction: Optional[str] = None,
+    glimpse: Optional[str] = None,
 ) -> List[Message]:
     """Assemble the provider payload from history + context."""
     system = VYRA_SYSTEM_PROMPT
-    note = context_note(user_name, vision)
+    note = context_note(user_name, vision, glimpse)
     if note:
         system = f"{system}\nContext:\n{note}"
 

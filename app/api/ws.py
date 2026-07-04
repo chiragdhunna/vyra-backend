@@ -8,7 +8,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..config import get_settings
 from ..providers import get_llm_provider
 from ..realtime.session import RealtimeSession
+from ..realtime.sight import build_sight
 from ..realtime.stt import build_stt
+from ..realtime.tts import build_tts
 from ..schemas import VisionContext
 
 logger = logging.getLogger("vyra.ws")
@@ -61,6 +63,8 @@ async def realtime(ws: WebSocket) -> None:
         settings=settings,
         provider=get_llm_provider(),
         stt=build_stt(settings),
+        tts=build_tts(settings),
+        sight=build_sight(settings),
         user_name=start.get("user_name") or None,
         sample_rate=int(start.get("sample_rate") or 16000),
         greet=bool(start.get("greet", True)),
@@ -94,6 +98,8 @@ async def realtime(ws: WebSocket) -> None:
                         eyes_open=float(event.get("eyes_open", 1.0)),
                     )
                 )
+            elif kind == "vision.frame":
+                await session.on_vision_frame(str(event.get("jpeg_b64", "")))
             elif kind == "tts.state":
                 await session.on_tts_state(bool(event.get("playing", False)))
             elif kind == "mic.state":
