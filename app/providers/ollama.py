@@ -6,11 +6,16 @@ returns newline-delimited JSON.
 """
 
 import json
+import re
 from typing import AsyncIterator, List, Optional
 
 import httpx
 
 from .base import LLMProvider, Message, ProviderError
+
+# Reasoning models (qwen3, deepseek-r1, ...) may wrap chain-of-thought in
+# <think> blocks inside content; that must never reach the voice pipeline.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 class OllamaProvider(LLMProvider):
@@ -62,9 +67,23 @@ class OllamaProvider(LLMProvider):
         except httpx.HTTPError as exc:
             raise ProviderError(f"Ollama request failed: {exc}") from exc
         try:
-            return data["message"]["content"]
+            message = data["message"]
+            content = message.get("content") or ""
         except (KeyError, TypeError) as exc:
             raise ProviderError(f"Unexpected Ollama response: {data!r}") from exc
+        content = _THINK_BLOCK.sub("", content).strip()
+        if not content:
+            # Newer Ollama can put reasoning-model output in message.thinking;
+            # and some model/template combos emit an instant end-of-turn.
+            # Surface it loudly instead of letting an empty reply flow on.
+            thinking = (message.get("thinking") or "").strip()
+            raise ProviderError(
+                f"Ollama returned an empty reply from '{self.model}'"
+                + (" (only 'thinking' output — try a non-reasoning model "
+                   "like llama3.1)" if thinking else
+                   f" — sanity-check it with: ollama run {self.model} \"say hi\"")
+            )
+        return content
 
     async def chat_stream(self, messages: List[Message]) -> AsyncIterator[str]:
         try:

@@ -42,13 +42,23 @@ def build_messages(
     note = context_note(user_name, vision)
     if note:
         system = f"{system}\nContext:\n{note}"
-    if extra_instruction:
+
+    window = turns[-max_history_turns:] if max_history_turns > 0 else turns
+
+    # Greetings / proactive nudges arrive as an extra instruction. When the
+    # conversation already has turns, it rides along in the system prompt.
+    # But with ZERO turns (fresh session greeting), many instruct models —
+    # llama3.1 included — emit an immediate end-of-turn for a system-only
+    # prompt, producing an EMPTY reply. So with no history the instruction
+    # becomes the sole user-role message instead, which reliably generates.
+    if extra_instruction and window:
         system = f"{system}\n\nRight now:\n{extra_instruction}"
 
     messages: List[Message] = [{"role": "system", "content": system}]
-    window = turns[-max_history_turns:] if max_history_turns > 0 else turns
     for turn in window:
         messages.append({"role": turn.role, "content": turn.content})
+    if extra_instruction and not window:
+        messages.append({"role": "user", "content": extra_instruction})
     return messages
 
 

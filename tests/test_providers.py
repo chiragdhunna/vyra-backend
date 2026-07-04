@@ -164,6 +164,33 @@ async def test_ollama_404_surfaces_model_hint():
     await provider.aclose()
 
 
+@pytest.mark.anyio
+async def test_ollama_strips_think_blocks_and_rejects_empty():
+    from app.providers.base import ProviderError
+
+    responses = iter([
+        {"message": {"role": "assistant",
+                     "content": "<think>hmm reasoning</think>Hey there!"}},
+        {"message": {"role": "assistant", "content": "",
+                     "thinking": "endless pondering"}},
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=next(responses))
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ollama.test"
+    )
+    provider = OllamaProvider(
+        host="http://ollama.test", model="qwen3", client=client
+    )
+    assert await provider.chat(MESSAGES) == "Hey there!"
+    with pytest.raises(ProviderError) as excinfo:
+        await provider.chat(MESSAGES)
+    assert "empty reply" in str(excinfo.value)
+    await provider.aclose()
+
+
 def test_gemini_requires_key():
     import pytest as _pytest
 

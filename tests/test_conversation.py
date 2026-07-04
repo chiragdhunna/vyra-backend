@@ -47,6 +47,16 @@ def test_context_and_instruction_land_in_system():
     assert "Greet them first." in system
 
 
+def test_instruction_with_empty_history_becomes_user_message():
+    # System-only prompts make instruct models (llama3.1 etc.) emit an
+    # instant end-of-turn -> empty reply. Greeting/nudge instructions must
+    # therefore arrive as a user turn when there is no history yet.
+    messages = build_messages([], extra_instruction="Greet them first.")
+    assert messages[0]["role"] == "system"
+    assert "Greet them first." not in messages[0]["content"]
+    assert messages[-1] == {"role": "user", "content": "Greet them first."}
+
+
 def test_session_history_bounded_and_counted():
     history = SessionHistory(max_turns=4)
     for i in range(6):

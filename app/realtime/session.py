@@ -189,7 +189,12 @@ class RealtimeSession:
             return
         text = text.strip()
         if not text:
+            logger.info(
+                "utterance (%.1fs audio) transcribed to empty text — ignored",
+                len(pcm) / 2 / self._sample_rate,
+            )
             return
+        logger.info("heard (%.1fs): %r", len(pcm) / 2 / self._sample_rate, text)
         await self._send(protocol.event("user.final", text=text))
         await self._handle_user_final(text)
 
@@ -224,8 +229,13 @@ class RealtimeSession:
             await self._send(protocol.event("error", message=str(exc)))
             await self._say(_FALLBACK_LINE, "sad", remember=False)
             return
+        logger.info("llm raw (%d chars): %r", len(raw), raw[:160])
         text, emotion = parse_emotion(raw)
         if not text:
+            logger.warning(
+                "LLM reply parsed to empty text (raw was %r) — asking to repeat",
+                raw[:200],
+            )
             text, emotion = "Sorry, say that again?", "thinking"
         await self._say(text, emotion, proactive=extra_instruction is not None)
 
