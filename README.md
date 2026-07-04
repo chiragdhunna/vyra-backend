@@ -41,26 +41,30 @@
 
 ```mermaid
 flowchart LR
-    subgraph PHONE["📱 Vyra app (Flutter)"]
-        MIC["🎤 mic<br/>PCM16 stream"]
-        CAM["📷 camera<br/>ML Kit labels + rare tiny frames"]
-        AVATAR["🧍‍♀️ anime avatar<br/>lips · emotions · gestures"]
-        SPK["🔊 speaker<br/>her neural voice"]
+    subgraph PHONE["Vyra app - Flutter phone"]
+        MIC["Mic<br/>PCM16 stream"]
+        CAM["Camera<br/>ML Kit labels + tiny frames"]
+        AVATAR["Anime avatar<br/>lips, emotions, gestures"]
+        SPK["Speaker<br/>her neural voice"]
     end
-
-    subgraph BACKEND["🧠 vyra-backend (this repo)"]
+    subgraph BACKEND["vyra-backend - this repo"]
         VAD["VAD + endpointing<br/>+ barge-in"]
-        STT["faster-whisper<br/>(ears)"]
-        SOUL["conversation brain<br/>starters · vision reactions · emotions"]
-        LLM["LLM switch<br/>ollama · gemini · openai · echo"]
-        TTS["Edge neural TTS<br/>(voice)"]
-        SIGHT["vision LLM glimpse<br/>moondream / llava (optional)"]
+        STT["faster-whisper<br/>ears"]
+        SOUL["Conversation brain<br/>starters, vision reactions, emotions"]
+        LLM["LLM switch<br/>ollama / gemini / openai / echo"]
+        TTS["Edge neural TTS<br/>voice"]
+        SIGHT["Vision LLM glimpse<br/>moondream / llava, optional"]
     end
-
-    MIC -- "ws: audio" --> VAD --> STT --> SOUL
-    CAM -- "ws: labels + frames" --> SIGHT --> SOUL
-    SOUL <--> LLM
-    SOUL --> TTS -- "ws: mp3 + emotion + gesture" --> SPK & AVATAR
+    MIC -->|ws audio| VAD
+    VAD --> STT
+    STT --> SOUL
+    CAM -->|ws labels + frames| SIGHT
+    SIGHT --> SOUL
+    SOUL --> LLM
+    LLM --> SOUL
+    SOUL --> TTS
+    TTS -->|ws mp3 + emotion + gesture| SPK
+    TTS --> AVATAR
 ```
 
 **Why a backend at all?** Three things a phone can't do alone: run a real local LLM (Ollama lives here), keep API keys out of the APK, and stream-listen *while speaking* so you can interrupt her like a real person (on-device speech recognizers are strictly turn-based).
@@ -220,17 +224,17 @@ Text frames = JSON events. Binary frames = raw mic audio (PCM16 mono LE @ 16 kHz
 
 ```mermaid
 sequenceDiagram
-    participant P as 📱 Phone
-    participant B as 🧠 Backend
+    participant P as Phone
+    participant B as Backend
     P->>B: session.start
-    B->>P: session.ready + state: listening
-    B->>P: assistant.say "Hey, you're here!" (wave 👋) + assistant.audio
-    P->>B: 🎤 audio stream…
+    B->>P: session.ready + state listening
+    B->>P: assistant.say "Hey, you're here!" (wave) + assistant.audio
+    P->>B: mic audio stream...
     B->>P: user.final "so how was your day?"
-    B->>P: state: thinking → speaking
-    B->>P: assistant.say {emotion: happy} + assistant.audio
-    Note over P,B: you talk over her…
-    B->>P: tts.interrupt ✋ + state: listening
+    B->>P: state thinking, then speaking
+    B->>P: assistant.say (emotion happy) + assistant.audio
+    Note over P,B: you talk over her...
+    B->>P: tts.interrupt + state listening
 ```
 </details>
 
