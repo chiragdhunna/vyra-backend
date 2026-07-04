@@ -70,18 +70,36 @@ class WhisperStt(SttEngine):
         model = await self._ensure_model()
         loop = asyncio.get_event_loop()
 
-        def _run() -> str:
+        def _run(m) -> str:
             import numpy as np  # faster-whisper depends on numpy
 
             audio = (
                 np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
             )
-            segments, _info = model.transcribe(
+            segments, _info = m.transcribe(
                 audio, language="en", beam_size=1, vad_filter=False
             )
             return " ".join(seg.text.strip() for seg in segments).strip()
 
-        return await loop.run_in_executor(None, _run)
+        try:
+            return await loop.run_in_executor(None, lambda: _run(model))
+        except Exception as exc:  # noqa: BLE001 - inspect for GPU issues
+            # `device=auto` picks CUDA on machines with an NVIDIA GPU, but
+            # the CUDA runtime (cuBLAS/cuDNN DLLs) is often not installed.
+            # Fall back to CPU transparently — base/int8 is realtime on CPU.
+            message = str(exc).lower()
+            gpu_issue = any(
+                key in message for key in ("cublas", "cudnn", "cuda", "hip")
+            )
+            if gpu_issue and self._device != "cpu":
+                logger.warning(
+                    "Whisper GPU path failed (%s) — falling back to CPU.", exc
+                )
+                self._device = "cpu"
+                self._model = None
+                model = await self._ensure_model()
+                return await loop.run_in_executor(None, lambda: _run(model))
+            raise
 
 
 class FakeStt(SttEngine):

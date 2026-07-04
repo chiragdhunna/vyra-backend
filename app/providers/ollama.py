@@ -45,6 +45,20 @@ class OllamaProvider(LLMProvider):
             )
             response.raise_for_status()
             data = response.json()
+        except httpx.HTTPStatusError as exc:
+            # Ollama's error bodies are the useful part — e.g. a 404 body is
+            # `model 'x' not found, try pulling it first`.
+            detail = ""
+            try:
+                detail = (exc.response.text or "").strip()[:300]
+            except Exception:  # noqa: BLE001
+                pass
+            hint = f" — {detail}" if detail else ""
+            if exc.response.status_code == 404:
+                hint += (
+                    f" (is the model pulled? try: ollama pull {self.model})"
+                )
+            raise ProviderError(f"Ollama request failed: {exc}{hint}") from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"Ollama request failed: {exc}") from exc
         try:

@@ -47,8 +47,17 @@ async def realtime(ws: WebSocket) -> None:
         await ws.close(code=4400, reason="expected session.start JSON")
         return
 
+    async def safe_send(payload: dict) -> None:
+        # Session tasks (speak-timeout, proactivity, STT errors) can fire
+        # after the phone dropped/reconnected; a dead socket must never
+        # crash the session or spam ASGI 'send after close' errors.
+        try:
+            await ws.send_json(payload)
+        except Exception:  # noqa: BLE001 - socket gone, drop quietly
+            pass
+
     session = RealtimeSession(
-        send=ws.send_json,
+        send=safe_send,
         settings=settings,
         provider=get_llm_provider(),
         stt=build_stt(settings),

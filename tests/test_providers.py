@@ -141,6 +141,29 @@ async def test_gemini_stream_sse():
     await provider.aclose()
 
 
+@pytest.mark.anyio
+async def test_ollama_404_surfaces_model_hint():
+    from app.providers.base import ProviderError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404, json={"error": "model 'llama3.1' not found, try pulling it first"}
+        )
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ollama.test"
+    )
+    provider = OllamaProvider(
+        host="http://ollama.test", model="llama3.1", client=client
+    )
+    with pytest.raises(ProviderError) as excinfo:
+        await provider.chat(MESSAGES)
+    message = str(excinfo.value)
+    assert "try pulling it first" in message
+    assert "ollama pull llama3.1" in message
+    await provider.aclose()
+
+
 def test_gemini_requires_key():
     import pytest as _pytest
 
